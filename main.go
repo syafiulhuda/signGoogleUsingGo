@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time" // Package time sudah digunakan untuk mengatur waktu cookie
 
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -49,6 +50,7 @@ func main() {
 	http.HandleFunc("/", handleHome)
 	http.HandleFunc("/login", handleLogin)
 	http.HandleFunc("/callback", handleCallback)
+	http.HandleFunc("/logout", handleLogout) // Tambahkan handler logout
 
 	// Jalankan server HTTP di port 9090
 	fmt.Println("Server running on http://localhost:9090")
@@ -58,13 +60,64 @@ func main() {
 }
 
 func handleHome(w http.ResponseWriter, r *http.Request) {
-	halaman := "/login"
-	html := "<html><body><a href='" + halaman + "'>Login using Google</a></body></html>"
+	html := `
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Login with Google</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				background-color: #f4f4f9;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				margin: 0;
+			}
+			.container {
+				background: white;
+				padding: 2rem;
+				border-radius: 8px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+				text-align: center;
+			}
+			.button {
+				background-color: #4285F4;
+				color: white;
+				border: none;
+				padding: 0.75rem 1.5rem;
+				border-radius: 4px;
+				font-size: 1rem;
+				cursor: pointer;
+				text-decoration: none;
+				display: inline-block;
+				margin-top: 1rem;
+			}
+			.button:hover {
+				background-color: #357ABD;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>Welcome to My App</h1>
+			<p>Please log in to continue.</p>
+			<a href="/login" class="button">Login with Google</a>
+			<!-- Link Logout hanya sebagai contoh, jika sudah login dan menyimpan sesi -->
+			<a href="/logout" class="button">Logout</a>
+		</div>
+	</body>
+	</html>
+	`
+	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprint(w, html)
 }
-
 func handleLogin(w http.ResponseWriter, r *http.Request) {
-	url := googleOAuthConfig.AuthCodeURL(randomState)
+	// Menambahkan parameter "prompt=select_account" agar Google selalu menampilkan halaman pemilihan akun.
+	url := googleOAuthConfig.AuthCodeURL(randomState, oauth2.SetAuthURLParam("prompt", "select_account"))
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
@@ -82,6 +135,17 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Simpan token di cookie (untuk keperluan sesi)
+	// Pastikan untuk mengenkripsi token dan mengamankan cookie di production.
+	cookie := &http.Cookie{
+		Name:     "session_token",
+		Value:    token.AccessToken,
+		Path:     "/",
+		Expires:  time.Now().Add(1 * time.Hour),
+		HttpOnly: true,
+	}
+	http.SetCookie(w, cookie)
+
 	// Ambil data pengguna dari Google API
 	resp, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + token.AccessToken)
 	if err != nil {
@@ -98,6 +162,83 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tampilkan data yang didapat
-	fmt.Fprintf(w, "Content: %s", content)
+	// Tampilkan data pengguna dalam format HTML
+	html := `
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>User Info</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				background-color: #f4f4f9;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				margin: 0;
+			}
+			.user-info-container {
+				background: white;
+				padding: 2rem;
+				border-radius: 8px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+				text-align: center;
+			}
+			.user-info-container h1 {
+				margin-bottom: 1rem;
+			}
+			.user-info-container pre {
+				background: #f9f9f9;
+				padding: 1rem;
+				border-radius: 4px;
+				text-align: left;
+				max-width: 400px;
+				overflow-x: auto;
+			}
+			.button {
+				background-color: #4285F4;
+				color: white;
+				border: none;
+				padding: 0.75rem 1.5rem;
+				border-radius: 4px;
+				font-size: 1rem;
+				cursor: pointer;
+				text-decoration: none;
+				display: inline-block;
+				margin-top: 1rem;
+			}
+			.button:hover {
+				background-color: #357ABD;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="user-info-container">
+			<h1>User Info</h1>
+			<pre>` + string(content) + `</pre>
+			<a href="/logout" class="button">Logout</a>
+		</div>
+	</body>
+	</html>
+	`
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, html)
+}
+
+// handleLogout menghapus cookie session dan mengarahkan pengguna ke halaman home
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Buat cookie dengan masa berlaku sudah lewat untuk menghapusnya
+	cookie := &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Now().Add(-time.Hour),
+		HttpOnly: true,
+	}
+	http.SetCookie(w, cookie)
+	// Redirect ke halaman home setelah logout
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 }
